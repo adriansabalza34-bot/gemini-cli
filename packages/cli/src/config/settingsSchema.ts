@@ -21,6 +21,7 @@ import {
   type AgentOverride,
   type CustomTheme,
   type SandboxConfig,
+  type VertexAiRoutingConfig,
 } from '@google/gemini-cli-core';
 import type { SessionRetentionSettings } from './settings.js';
 import { DEFAULT_MIN_RETENTION } from '../utils/sessionCleanup.js';
@@ -256,13 +257,28 @@ const SETTINGS_SCHEMA = {
       },
       enableNotifications: {
         type: 'boolean',
-        label: 'Enable Notifications',
+        label: 'Enable Terminal Notifications',
         category: 'General',
         requiresRestart: false,
         default: false,
         description:
-          'Enable run-event notifications for action-required prompts and session completion.',
+          'Enable terminal run-event notifications for action-required prompts and session completion.',
         showInDialog: true,
+      },
+      notificationMethod: {
+        type: 'enum',
+        label: 'Terminal Notification Method',
+        category: 'General',
+        requiresRestart: false,
+        default: 'auto',
+        description: 'How to send terminal notifications.',
+        showInDialog: true,
+        options: [
+          { value: 'auto', label: 'Auto' },
+          { value: 'osc9', label: 'OSC 9' },
+          { value: 'osc777', label: 'OSC 777' },
+          { value: 'bell', label: 'Bell' },
+        ],
       },
       checkpointing: {
         type: 'object',
@@ -403,6 +419,26 @@ const SETTINGS_SCHEMA = {
         },
         description: 'Settings for automatic session cleanup.',
       },
+      topicUpdateNarration: {
+        type: 'boolean',
+        label: 'Topic & Update Narration',
+        category: 'General',
+        requiresRestart: false,
+        default: true,
+        description:
+          'Enable the Topic & Update communication model for reduced chattiness and structured progress reporting.',
+        showInDialog: true,
+      },
+      logRagSnippets: {
+        type: 'boolean',
+        label: 'Log RAG Snippets',
+        category: 'General',
+        requiresRestart: false,
+        default: false,
+        description:
+          'Log full Code Customization (RAG) retrieved snippets to a local file for debugging.',
+        showInDialog: true,
+      },
     },
   },
   output: {
@@ -439,6 +475,16 @@ const SETTINGS_SCHEMA = {
     description: 'User interface settings.',
     showInDialog: false,
     properties: {
+      debugRainbow: {
+        type: 'boolean',
+        label: 'Debug Rainbow',
+        category: 'UI',
+        requiresRestart: true,
+        default: false,
+        description:
+          'Enable debug rainbow rendering. Only useful for debugging rendering bugs and performance issues.',
+        showInDialog: false,
+      },
       theme: {
         type: 'string',
         label: 'Theme',
@@ -576,7 +622,7 @@ const SETTINGS_SCHEMA = {
         label: 'Compact Tool Output',
         category: 'UI',
         requiresRestart: false,
-        default: false,
+        default: true,
         description:
           'Display tool outputs (like directory listings and file reads) in a compact, structured format.',
         showInDialog: true,
@@ -741,6 +787,24 @@ const SETTINGS_SCHEMA = {
         default: false,
         description:
           'Use an alternate screen buffer for the UI, preserving shell history.',
+        showInDialog: true,
+      },
+      renderProcess: {
+        type: 'boolean',
+        label: 'Render Process',
+        category: 'UI',
+        requiresRestart: true,
+        default: true,
+        description: 'Enable Ink render process for the UI.',
+        showInDialog: true,
+      },
+      terminalBuffer: {
+        type: 'boolean',
+        label: 'Terminal Buffer',
+        category: 'UI',
+        requiresRestart: true,
+        default: false,
+        description: 'Use the new terminal buffer architecture for rendering.',
         showInDialog: true,
       },
       useBackgroundColor: {
@@ -936,6 +1000,45 @@ const SETTINGS_SCHEMA = {
           { value: 'always', label: 'Always use credits' },
           { value: 'never', label: 'Never use credits' },
         ],
+      },
+      vertexAi: {
+        type: 'object',
+        label: 'Vertex AI',
+        category: 'Advanced',
+        requiresRestart: true,
+        default: undefined as VertexAiRoutingConfig | undefined,
+        description: 'Vertex AI request routing settings.',
+        showInDialog: false,
+        properties: {
+          requestType: {
+            type: 'enum',
+            label: 'Vertex AI Request Type',
+            category: 'Advanced',
+            requiresRestart: true,
+            default: undefined as VertexAiRoutingConfig['requestType'],
+            description:
+              'Sets the X-Vertex-AI-LLM-Request-Type header for Vertex AI requests.',
+            showInDialog: false,
+            options: [
+              { value: 'dedicated', label: 'Dedicated' },
+              { value: 'shared', label: 'Shared' },
+            ],
+          },
+          sharedRequestType: {
+            type: 'enum',
+            label: 'Vertex AI Shared Request Type',
+            category: 'Advanced',
+            requiresRestart: true,
+            default: undefined as VertexAiRoutingConfig['sharedRequestType'],
+            description:
+              'Sets the X-Vertex-AI-LLM-Shared-Request-Type header for Vertex AI requests.',
+            showInDialog: false,
+            options: [
+              { value: 'priority', label: 'Priority' },
+              { value: 'flex', label: 'Flex' },
+            ],
+          },
+        },
       },
     },
   },
@@ -1202,7 +1305,8 @@ const SETTINGS_SCHEMA = {
             category: 'Advanced',
             requiresRestart: true,
             default: undefined as string | undefined,
-            description: 'Model override for the visual agent.',
+            description:
+              "Model for the visual agent's analyze_screenshot tool. When set, enables the tool.",
             showInDialog: false,
           },
           allowedDomains: {
@@ -1377,6 +1481,17 @@ const SETTINGS_SCHEMA = {
             description: 'Respect .geminiignore files when searching.',
             showInDialog: true,
           },
+          enableFileWatcher: {
+            type: 'boolean',
+            label: 'Enable File Watcher',
+            category: 'Context',
+            requiresRestart: true,
+            default: false,
+            description: oneLine`
+              Enable file watcher updates for @ file suggestions (experimental).
+            `,
+            showInDialog: false,
+          },
           enableRecursiveFileSearch: {
             type: 'boolean',
             label: 'Enable Recursive File Search',
@@ -1508,7 +1623,7 @@ const SETTINGS_SCHEMA = {
             label: 'Show Color',
             category: 'Tools',
             requiresRestart: false,
-            default: false,
+            default: true,
             description: 'Show color in shell output.',
             showInDialog: true,
           },
@@ -1558,6 +1673,19 @@ const SETTINGS_SCHEMA = {
           Tool names that bypass the confirmation dialog.
           Useful for trusted commands (for example ["run_shell_command(git)", "run_shell_command(npm test)"]).
           See shell tool command restrictions for matching details.
+        `,
+        showInDialog: false,
+        items: { type: 'string' },
+      },
+      confirmationRequired: {
+        type: 'array',
+        label: 'Confirmation Required',
+        category: 'Advanced',
+        requiresRestart: true,
+        default: undefined as string[] | undefined,
+        description: oneLine`
+          Tool names that always require user confirmation.
+          Takes precedence over allowed tools and core tool allowlists.
         `,
         showInDialog: false,
         items: { type: 'string' },
@@ -1692,10 +1820,10 @@ const SETTINGS_SCHEMA = {
         type: 'boolean',
         label: 'Tool Sandboxing',
         category: 'Security',
-        requiresRestart: false,
+        requiresRestart: true,
         default: false,
         description:
-          'Experimental tool-level sandboxing (implementation in progress).',
+          'Tool-level sandboxing. Isolates individual tools instead of the entire CLI process.',
         showInDialog: true,
       },
       disableYoloMode: {
@@ -1887,8 +2015,9 @@ const SETTINGS_SCHEMA = {
         label: 'Auto Configure Max Old Space Size',
         category: 'Advanced',
         requiresRestart: true,
-        default: false,
-        description: 'Automatically configure Node.js memory limits',
+        default: true,
+        description:
+          'Automatically configure Node.js memory limits. Note: Because memory is allocated during the initial process boot, this setting is only read from the global user settings file and ignores workspace-level overrides.',
         showInDialog: true,
       },
       dnsResolutionOrder: {
@@ -1910,6 +2039,16 @@ const SETTINGS_SCHEMA = {
         showInDialog: false,
         items: { type: 'string' },
         mergeStrategy: MergeStrategy.UNION,
+      },
+      ignoreLocalEnv: {
+        type: 'boolean',
+        label: 'Ignore Local .env',
+        category: 'Advanced',
+        requiresRestart: true,
+        default: false,
+        description:
+          'Whether to ignore generic .env files in the project directory.',
+        showInDialog: true,
       },
       bugCommand: {
         type: 'object',
@@ -1933,6 +2072,100 @@ const SETTINGS_SCHEMA = {
     description: 'Setting to enable experimental features',
     showInDialog: false,
     properties: {
+      gemma: {
+        type: 'boolean',
+        label: 'Gemma Models',
+        category: 'Experimental',
+        requiresRestart: true,
+        default: true,
+        description: 'Enable access to Gemma 4 models via Gemini API.',
+        showInDialog: true,
+      },
+      voiceMode: {
+        type: 'boolean',
+        label: 'Voice Mode',
+        category: 'Experimental',
+        requiresRestart: false,
+        default: false,
+        description:
+          'Enable experimental voice dictation and commands (/voice, /voice model).',
+        showInDialog: true,
+      },
+      voice: {
+        type: 'object',
+        label: 'Voice',
+        category: 'Experimental',
+        requiresRestart: false,
+        default: {},
+        description: 'Settings for voice mode and transcription.',
+        showInDialog: false,
+        properties: {
+          activationMode: {
+            type: 'enum',
+            label: 'Voice Activation Mode',
+            category: 'Experimental',
+            requiresRestart: false,
+            default: 'push-to-talk',
+            description: 'How to trigger voice recording with the Space key.',
+            showInDialog: true,
+            options: [
+              { value: 'push-to-talk', label: 'Push-To-Talk (Hold Space)' },
+              { value: 'toggle', label: 'Toggle (Press Space to start/stop)' },
+            ],
+          },
+          backend: {
+            type: 'enum',
+            label: 'Voice Transcription Backend',
+            category: 'Experimental',
+            requiresRestart: false,
+            default: 'gemini-live',
+            description: oneLine`
+              The backend to use for voice transcription. Note: When using the
+              Gemini Live backend, voice recordings are sent to Google Cloud for
+              transcription.
+            `,
+            showInDialog: true,
+            options: [
+              { value: 'gemini-live', label: 'Gemini Live API (Cloud)' },
+              { value: 'whisper', label: 'Whisper (Local)' },
+            ],
+          },
+          whisperModel: {
+            type: 'enum',
+            label: 'Whisper Model',
+            category: 'Experimental',
+            requiresRestart: false,
+            default: 'ggml-base.en.bin',
+            description: 'The Whisper model to use for local transcription.',
+            showInDialog: true,
+            options: [
+              { value: 'ggml-tiny.en.bin', label: 'Tiny (EN) - Fast (~75MB)' },
+              {
+                value: 'ggml-base.en.bin',
+                label: 'Base (EN) - Balanced (~142MB)',
+              },
+              {
+                value: 'ggml-large-v3-turbo-q5_0.bin',
+                label: 'Large v3 Turbo (Q5_0) - High Accuracy (~547MB)',
+              },
+              {
+                value: 'ggml-large-v3-turbo-q8_0.bin',
+                label: 'Large v3 Turbo (Q8_0) - Max Accuracy (~834MB)',
+              },
+            ],
+          },
+          stopGracePeriodMs: {
+            type: 'number',
+            label: 'Voice Stop Grace Period (ms)',
+            category: 'Experimental',
+            requiresRestart: false,
+            default: 4000,
+            description:
+              'How long to wait for final transcription after stopping recording.',
+            showInDialog: true,
+          },
+        },
+      },
       adk: {
         type: 'object',
         label: 'ADK',
@@ -1949,6 +2182,16 @@ const SETTINGS_SCHEMA = {
             requiresRestart: true,
             default: false,
             description: 'Enable non-interactive agent sessions.',
+            showInDialog: false,
+          },
+          agentSessionInteractiveEnabled: {
+            type: 'boolean',
+            label: 'Interactive Agent Session Enabled',
+            category: 'Experimental',
+            requiresRestart: true,
+            default: false,
+            description:
+              'Enable the agent session implementation for the interactive CLI.',
             showInDialog: false,
           },
         },
@@ -2017,15 +2260,6 @@ const SETTINGS_SCHEMA = {
         default: false,
         description:
           'Enables extension loading/unloading within the CLI session.',
-        showInDialog: false,
-      },
-      jitContext: {
-        type: 'boolean',
-        label: 'JIT Context Loading',
-        category: 'Experimental',
-        requiresRestart: true,
-        default: false,
-        description: 'Enable Just-In-Time (JIT) context loading.',
         showInDialog: false,
       },
       useOSC52Paste: {
@@ -2104,6 +2338,26 @@ const SETTINGS_SCHEMA = {
             default: false,
             description:
               'Enable the Gemma Model Router (experimental). Requires a local endpoint serving Gemma via the Gemini API using LiteRT-LM shim.',
+            showInDialog: true,
+          },
+          autoStartServer: {
+            type: 'boolean',
+            label: 'Auto-start LiteRT Server',
+            category: 'Experimental',
+            requiresRestart: true,
+            default: false,
+            description:
+              'Automatically start the LiteRT-LM server when Gemini CLI starts and the Gemma router is enabled.',
+            showInDialog: true,
+          },
+          binaryPath: {
+            type: 'string',
+            label: 'LiteRT Binary Path',
+            category: 'Experimental',
+            requiresRestart: true,
+            default: '',
+            description:
+              'Custom path to the LiteRT-LM binary. Leave empty to use the default location (~/.gemini/bin/litert/).',
             showInDialog: false,
           },
           classifier: {
@@ -2138,14 +2392,35 @@ const SETTINGS_SCHEMA = {
           },
         },
       },
-      memoryManager: {
+      stressTestProfile: {
         type: 'boolean',
-        label: 'Memory Manager Agent',
+        label:
+          'Use the stress test profile to aggressively trigger context management.',
         category: 'Experimental',
         requiresRestart: true,
         default: false,
         description:
-          'Replace the built-in save_memory tool with a memory manager subagent that supports adding, removing, de-duplicating, and organizing memories.',
+          'Significantly lowers token limits to force early garbage collection and distillation for testing purposes.',
+        showInDialog: false,
+      },
+      autoMemory: {
+        type: 'boolean',
+        label: 'Auto Memory',
+        category: 'Experimental',
+        requiresRestart: true,
+        default: false,
+        description:
+          'Automatically extract memory patches and skills from past sessions in the background. Every change is written as a unified diff `.patch` file under `<projectMemoryDir>/.inbox/<kind>/` and held for review in /memory inbox; nothing is applied until you approve it.',
+        showInDialog: true,
+      },
+      generalistProfile: {
+        type: 'boolean',
+        label: 'Use the generalist profile to manage agent contexts.',
+        category: 'Experimental',
+        requiresRestart: true,
+        default: false,
+        description:
+          'Suitable for general coding and software development tasks.',
         showInDialog: true,
       },
       contextManagement: {
@@ -2163,9 +2438,8 @@ const SETTINGS_SCHEMA = {
         category: 'Experimental',
         requiresRestart: false,
         default: false,
-        description:
-          'Enable the experimental Topic & Update communication model for reduced chattiness and structured progress reporting.',
-        showInDialog: true,
+        description: 'Deprecated: Use general.topicUpdateNarration instead.',
+        showInDialog: false,
       },
     },
   },
@@ -2916,6 +3190,11 @@ export const SETTINGS_SCHEMA_DEFINITIONS: Record<
         description: 'Protocol for OTLP exporters.',
         enum: ['grpc', 'http'],
       },
+      traces: {
+        type: 'boolean',
+        description:
+          'Whether detailed traces with large attributes are captured.',
+      },
       logPrompts: {
         type: 'boolean',
         description: 'Whether prompts are logged in telemetry payloads.',
@@ -3014,6 +3293,7 @@ export const SETTINGS_SCHEMA_DEFINITIONS: Record<
           secondary: { type: 'string' },
           link: { type: 'string' },
           accent: { type: 'string' },
+          response: { type: 'string' },
         },
       },
       background: {
@@ -3181,7 +3461,11 @@ export const SETTINGS_SCHEMA_DEFINITIONS: Record<
       family: { type: 'string' },
       isPreview: { type: 'boolean' },
       isVisible: { type: 'boolean' },
-      dialogDescription: { type: 'string' },
+      dialogDescription: {
+        type: 'string',
+        description:
+          "A description of the model to display in the model selection dialog. For the 'auto' alias, this value is dynamically generated and any value provided here will be ignored.",
+      },
       features: {
         type: 'object',
         properties: {

@@ -36,6 +36,8 @@ export enum AgentTerminateMode {
 export interface OutputObject {
   result: string;
   terminate_reason: AgentTerminateMode;
+  turn_count?: number;
+  duration_ms?: number;
 }
 
 /**
@@ -86,6 +88,13 @@ export interface SubagentActivityEvent {
   data: Record<string, unknown>;
 }
 
+export enum SubagentState {
+  RUNNING = 'running',
+  COMPLETED = 'completed',
+  ERROR = 'error',
+  CANCELLED = 'cancelled',
+}
+
 export interface SubagentActivityItem {
   id: string;
   type: 'thought' | 'tool_call';
@@ -93,14 +102,14 @@ export interface SubagentActivityItem {
   displayName?: string;
   description?: string;
   args?: string;
-  status: 'running' | 'completed' | 'error' | 'cancelled';
+  status: SubagentState;
 }
 
 export interface SubagentProgress {
   isSubagentProgress: true;
   agentName: string;
   recentActivity: SubagentActivityItem[];
-  state?: 'running' | 'completed' | 'error' | 'cancelled';
+  state?: SubagentState;
   result?: string;
   terminateReason?: AgentTerminateMode;
 }
@@ -214,6 +223,39 @@ export interface LocalAgentDefinition<
 
   // Optional configs
   toolConfig?: ToolConfig;
+
+  /**
+   * Optional additional workspace directories scoped to this agent.
+   * When provided, the agent receives a workspace context that extends
+   * the parent's with these directories. Other agents and the main
+   * session are unaffected. If omitted, the parent workspace context
+   * is inherited unchanged.
+   *
+   * Note: Filesystem root paths (e.g. `/` or `C:\`) are rejected at
+   * runtime to prevent accidentally granting access to the entire filesystem.
+   */
+  workspaceDirectories?: string[];
+
+  /**
+   * Allows this agent to access the canonical auto-memory inbox patch files
+   * under `<projectMemoryDir>/.inbox/{private,global}/extraction.patch`.
+   * This is intentionally narrow so the main session cannot bypass review by
+   * writing arbitrary inbox patches.
+   */
+  memoryInboxAccess?: boolean;
+
+  /**
+   * Restricts write validation for this agent to extracted skill artifacts and
+   * canonical auto-memory inbox patch files. Used by the background
+   * auto-memory extractor so active memory files cannot be edited directly.
+   */
+  autoMemoryExtractionWriteAccess?: boolean;
+
+  /**
+   * Controls whether extension memory is injected into this agent's initial
+   * session context when JIT context is enabled. Defaults to true.
+   */
+  includeExtensionContext?: boolean;
 
   /**
    * Optional inline MCP servers for this agent.
@@ -339,4 +381,17 @@ export interface RunConfig {
    * If not specified, defaults to DEFAULT_MAX_TURNS (30).
    */
   maxTurns?: number;
+}
+
+/**
+ * Summary of an agent reload operation.
+ */
+export interface AgentReloadSummary {
+  totalLoaded: number;
+  localCount: number;
+  remoteCount: number;
+  newAgents: string[];
+  updatedAgents: string[];
+  deletedAgents: string[];
+  errors: string[];
 }
